@@ -128,6 +128,24 @@ def compute_pattern_correlations_enhanced(dataset, args, vectorizer=None, save_p
         'control_flow': ['if', 'else', 'for', 'while', 'require(']
     }
     
+    # Extract features and labels
+    X = np.stack(dataset['vector'].values)
+    y = dataset['label'].values
+    
+    # Reshape to 2D for correlation analysis
+    n_samples = X.shape[0]
+    n_features = X.shape[1] * X.shape[2]
+    X_flat = X.reshape(n_samples, n_features)
+    
+    # Compute feature-to-label correlations
+    label_correlations = []
+    for i in range(X_flat.shape[1]):
+        if np.std(X_flat[:, i]) > 1e-6:  # Check for variance
+            corr, _ = pearsonr(X_flat[:, i], y)
+            label_correlations.append(corr)
+        else:
+            label_correlations.append(0.0)
+    
     # Try to get actual pattern counts
     if vectorizer is not None:
         pattern_matrix = extract_code_patterns_from_fragments(dataset, vectorizer)
@@ -157,7 +175,6 @@ def compute_pattern_correlations_enhanced(dataset, args, vectorizer=None, save_p
         pattern_matrix_normalized = pattern_matrix
     
     # Compute correlation with vulnerability labels
-    y = dataset['label'].values
     pattern_label_corr = {}
     
     for p_idx, pattern_name in enumerate(patterns.keys()):
@@ -187,10 +204,17 @@ def compute_pattern_correlations_enhanced(dataset, args, vectorizer=None, save_p
         total_count = np.sum(pattern_matrix[:, p_idx])
         print(f"{pattern_name}: {total_count:.0f} total occurrences")
     
+    # FIXED: Return the correct structure with all required keys
     return {
         'pattern_names': list(patterns.keys()),
         'pattern_label_correlation': pattern_label_corr,
-        'pattern_correlation_matrix': pattern_corr_matrix
+        'pattern_correlation_matrix': pattern_corr_matrix,
+        'label_correlation': np.array(label_correlations),  # ADD THIS LINE
+        'feature_correlation': np.corrcoef(X_flat.T) if X_flat.shape[1] > 1 else np.array([[1.0]]),  # ADD THIS LINE
+        'pattern_correlation': {  # ADD THIS NESTED STRUCTURE
+            'pattern_label_correlation': pattern_label_corr,
+            'pattern_correlation_matrix': pattern_corr_matrix
+        }
     }
 
 
@@ -1474,11 +1498,13 @@ def main():
    corr_results_path = Path(CONFIG['RESULTS_DIR']) / f"{Path(args.filename).stem}_correlations.json"
    with open(corr_results_path, 'w') as f:
         # Convert numpy arrays to lists for JSON serialization
-        corr_data = {
-            'label_correlations': corr_results['label_correlation'].tolist() if isinstance(corr_results['label_correlation'], np.ndarray) else corr_results['label_correlation'],
-            'pattern_correlations': corr_results['pattern_correlation']['pattern_label_correlation']
-        }
-        json.dump(corr_data, f, indent=4)
+       corr_data = {
+             'label_correlations': corr_results['label_correlation'].tolist() if isinstance(corr_results['label_correlation'], np.ndarray) else corr_results['label_correlation'],
+             'pattern_correlations': corr_results['pattern_label_correlation'],  # FIXED: Use correct key
+             'feature_correlation_shape': corr_results['feature_correlation'].shape if isinstance(corr_results['feature_correlation'], np.ndarray) else 'not_array',
+             'pattern_names': corr_results['pattern_names']
+         }
+       json.dump(corr_data, f, indent=4)
     
    print(f"\nCorrelation results saved to: {corr_results_path}")
     
