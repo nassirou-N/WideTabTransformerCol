@@ -114,7 +114,7 @@ def extract_code_patterns_from_fragments(dataset, vectorizer):
     
     return pattern_matrix
 
-def compute_pattern_correlations_enhanced(dataset, args, vectorizer=None):
+def compute_pattern_correlations_enhanced(dataset, args, vectorizer=None,save_path="patern.png"):
     """
     Enhanced version that uses actual code patterns if available
     """
@@ -520,7 +520,7 @@ def analyze_feature_importance_with_correlations(model, dataset, args):
     # This would depend on your specific model architecture
     
     # Compute correlations
-    corr_results = compute_feature_correlations(dataset, args)
+    corr_results = compute_pattern_correlations_enhanced(dataset, args)
     
     # Identify redundant features (highly correlated)
     feature_corr = corr_results['feature_correlation']
@@ -1463,7 +1463,7 @@ def main():
    print(f"{'='*60}")
     
    # Compute and visualize correlations
-   corr_results = compute_feature_correlations(
+   corr_results = compute_pattern_correlations_enhanced(
         dataset, 
         args,
         vectorizer=vectorizer,  
