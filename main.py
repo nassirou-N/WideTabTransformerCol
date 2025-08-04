@@ -114,7 +114,7 @@ def extract_code_patterns_from_fragments(dataset, vectorizer):
     
     return pattern_matrix
 
-def compute_pattern_correlations_enhanced(dataset, args, vectorizer=None,save_path="patern.png"):
+def compute_pattern_correlations_enhanced(dataset, args, vectorizer=None, save_path="correlation_analysis"):
     """
     Enhanced version that uses actual code patterns if available
     """
