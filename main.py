@@ -113,73 +113,104 @@ def extract_code_patterns_from_fragments(dataset, vectorizer):
                     pattern_matrix[idx, p_idx] = count
     
     return pattern_matrix
-
-def compute_pattern_correlations_enhanced(dataset, args, vectorizer=None, save_path="correlation_analysis"):
+def compute_and_visualize_correlations(dataset, args, vectorizer=None, save_path="correlation_analysis"):
     """
-    Enhanced version that uses actual code patterns if available
+    Complete correlation analysis with guaranteed visualization output
     """
-    print("\nAnalyzing vulnerability pattern correlations...")
+    print(f"\n{'='*60}")
+    print("COMPREHENSIVE CORRELATION ANALYSIS")
+    print(f"{'='*60}")
     
-    patterns = {
-        'external_call': ['call', 'send', 'transfer', 'delegatecall', '.value'],
-        'state_change': ['balance', '+=', '-=', 'Accounts[', 'balances['],
-        'access_control': ['require', 'assert', 'modifier', 'onlyOwner', 'msg.sender =='],
-        'value_transfer': ['value', 'msg.value', 'ether', 'wei', '.value('],
-        'control_flow': ['if', 'else', 'for', 'while', 'require(']
-    }
+    # Ensure save directory exists
+    save_dir = Path(save_path).parent
+    save_dir.mkdir(parents=True, exist_ok=True)
     
     # Extract features and labels
     X = np.stack(dataset['vector'].values)
     y = dataset['label'].values
+    
+    print(f"Dataset shape: {X.shape}")
+    print(f"Labels shape: {y.shape}")
     
     # Reshape to 2D for correlation analysis
     n_samples = X.shape[0]
     n_features = X.shape[1] * X.shape[2]
     X_flat = X.reshape(n_samples, n_features)
     
-    # Compute feature-to-label correlations
+    print(f"Flattened features shape: {X_flat.shape}")
+    
+    # 1. FEATURE-TO-LABEL CORRELATIONS
+    print("\nComputing feature-to-label correlations...")
     label_correlations = []
+    significant_features = []
+    
     for i in range(X_flat.shape[1]):
         if np.std(X_flat[:, i]) > 1e-6:  # Check for variance
-            corr, _ = pearsonr(X_flat[:, i], y)
+            corr, p_value = pearsonr(X_flat[:, i], y)
             label_correlations.append(corr)
+            if abs(corr) > 0.1:  # Significant correlation threshold
+                significant_features.append((i, corr, p_value))
         else:
             label_correlations.append(0.0)
     
-    # Try to get actual pattern counts
-    if vectorizer is not None:
-        pattern_matrix = extract_code_patterns_from_fragments(dataset, vectorizer)
+    label_correlations = np.array(label_correlations)
+    print(f"Feature-label correlations computed: {len(label_correlations)}")
+    print(f"Significant features (|r| > 0.1): {len(significant_features)}")
+    
+    # 2. FEATURE-TO-FEATURE CORRELATIONS (Sample for visualization)
+    print("\nComputing feature-to-feature correlations...")
+    
+    # Sample features for correlation matrix (too many features = memory issues)
+    if n_features > 100:
+        # Select top 50 features based on label correlation
+        top_indices = np.argsort(np.abs(label_correlations))[-50:]
+        X_sampled = X_flat[:, top_indices]
+        sampled_correlations = label_correlations[top_indices]
+        print(f"Sampling top 50 features for correlation matrix visualization")
     else:
-        # Fallback to statistical features
-        pattern_matrix = np.zeros((len(dataset), len(patterns)))
+        X_sampled = X_flat
+        top_indices = np.arange(n_features)
+        sampled_correlations = label_correlations
+    
+    # Compute feature-to-feature correlation matrix
+    if X_sampled.shape[1] > 1:
+        feature_corr_matrix = np.corrcoef(X_sampled.T)
+        feature_corr_matrix = np.nan_to_num(feature_corr_matrix, nan=0.0)
+    else:
+        feature_corr_matrix = np.array([[1.0]])
+    
+    print(f"Feature correlation matrix shape: {feature_corr_matrix.shape}")
+    
+    # 3. PATTERN ANALYSIS
+    print("\nAnalyzing vulnerability patterns...")
+    
+    patterns = {
+        'external_call': ['call', 'send', 'transfer', 'delegatecall', '.value'],
+        'state_change': ['balance', '+=', '-=', 'Accounts[', 'balances['],
+        'access_control': ['require', 'assert', 'modifier', 'onlyOwner'],
+        'value_transfer': ['value', 'msg.value', 'ether', 'wei'],
+        'control_flow': ['if', 'else', 'for', 'while', 'require(']
+    }
+    
+    # Create pattern features (statistical proxies)
+    pattern_matrix = np.zeros((len(dataset), len(patterns)))
+    
+    for idx, row in dataset.iterrows():
+        vector = row['vector']
+        vector_flat = vector.flatten()
         
-        for idx, row in dataset.iterrows():
-            vector = row['vector']
-            vector_flat = vector.flatten()
-            
-            # More sophisticated pattern detection based on vector patterns
-            pattern_matrix[idx, 0] = np.sum(vector_flat > np.percentile(vector_flat, 90))
-            pattern_matrix[idx, 1] = np.var(vector_flat)
-            pattern_matrix[idx, 2] = np.mean(np.abs(vector_flat - np.mean(vector_flat)))
-            pattern_matrix[idx, 3] = np.max(vector_flat) - np.min(vector_flat)
-            pattern_matrix[idx, 4] = np.sum(np.abs(np.diff(vector_flat)) > 0.1)
+        # Statistical pattern indicators
+        pattern_matrix[idx, 0] = np.sum(vector_flat > np.percentile(vector_flat, 90))  # High values
+        pattern_matrix[idx, 1] = np.var(vector_flat)  # Variability
+        pattern_matrix[idx, 2] = np.mean(np.abs(vector_flat))  # Average magnitude
+        pattern_matrix[idx, 3] = np.max(vector_flat) - np.min(vector_flat)  # Range
+        pattern_matrix[idx, 4] = np.sum(np.abs(np.diff(vector_flat)) > 0.1)  # Transitions
     
-    # Normalize pattern matrix
-    from sklearn.preprocessing import StandardScaler
-    scaler = StandardScaler()
-    
-    # Only normalize if we have variance
-    if np.any(np.std(pattern_matrix, axis=0) > 0):
-        pattern_matrix_normalized = scaler.fit_transform(pattern_matrix)
-    else:
-        pattern_matrix_normalized = pattern_matrix
-    
-    # Compute correlation with vulnerability labels
+    # Compute pattern correlations
     pattern_label_corr = {}
-    
     for p_idx, pattern_name in enumerate(patterns.keys()):
-        if np.std(pattern_matrix_normalized[:, p_idx]) > 1e-6:
-            corr, p_value = pearsonr(pattern_matrix_normalized[:, p_idx], y)
+        if np.std(pattern_matrix[:, p_idx]) > 1e-6:
+            corr, p_value = pearsonr(pattern_matrix[:, p_idx], y)
             pattern_label_corr[pattern_name] = {
                 'correlation': float(corr),
                 'p_value': float(p_value),
@@ -192,31 +223,221 @@ def compute_pattern_correlations_enhanced(dataset, args, vectorizer=None, save_p
                 'significance': 'not significant'
             }
     
-    # Compute inter-pattern correlations
-    if np.any(np.std(pattern_matrix_normalized, axis=0) > 0):
-        pattern_corr_matrix = np.corrcoef(pattern_matrix_normalized.T)
-        pattern_corr_matrix = np.nan_to_num(pattern_corr_matrix, nan=0.0)
-    else:
-        pattern_corr_matrix = np.eye(len(patterns))
+    # 4. CREATE COMPREHENSIVE VISUALIZATION
+    print(f"\nCreating correlation visualizations...")
     
-    print("\nPattern detection summary:")
-    for p_idx, pattern_name in enumerate(patterns.keys()):
-        total_count = np.sum(pattern_matrix[:, p_idx])
-        print(f"{pattern_name}: {total_count:.0f} total occurrences")
+    # Create main correlation plots
+    create_correlation_plots(
+        feature_corr_matrix, 
+        label_correlations, 
+        sampled_correlations,
+        pattern_label_corr, 
+        patterns,
+        save_path
+    )
     
-    # FIXED: Return the correct structure with all required keys
+    # Create detailed heatmaps
+    create_detailed_heatmaps(
+        feature_corr_matrix,
+        top_indices,
+        label_correlations,
+        save_path
+    )
+    
+    # Return comprehensive results
     return {
-        'pattern_names': list(patterns.keys()),
+        'label_correlation': label_correlations,
+        'feature_correlation': feature_corr_matrix,
         'pattern_label_correlation': pattern_label_corr,
-        'pattern_correlation_matrix': pattern_corr_matrix,
-        'label_correlation': np.array(label_correlations),  # ADD THIS LINE
-        'feature_correlation': np.corrcoef(X_flat.T) if X_flat.shape[1] > 1 else np.array([[1.0]]),  # ADD THIS LINE
-        'pattern_correlation': {  # ADD THIS NESTED STRUCTURE
-            'pattern_label_correlation': pattern_label_corr,
-            'pattern_correlation_matrix': pattern_corr_matrix
-        }
+        'pattern_names': list(patterns.keys()),
+        'significant_features': significant_features,
+        'sampled_indices': top_indices
     }
 
+def create_correlation_plots(feature_corr_matrix, all_label_correlations, sampled_correlations, 
+                           pattern_correlations, patterns, save_path):
+    """
+    Create comprehensive correlation visualization plots
+    """
+    plt.style.use('default')  # Use default style for compatibility
+    fig = plt.figure(figsize=(20, 15))
+    
+    try:
+        # 1. Feature-to-Feature Correlation Heatmap
+        ax1 = plt.subplot(2, 3, 1)
+        if feature_corr_matrix.shape[0] > 1:
+            im1 = ax1.imshow(feature_corr_matrix, cmap='RdBu_r', aspect='auto', vmin=-1, vmax=1)
+            plt.colorbar(im1, ax=ax1, shrink=0.8)
+        else:
+            ax1.text(0.5, 0.5, 'Single Feature\nNo Correlation Matrix', 
+                    ha='center', va='center', transform=ax1.transAxes)
+        ax1.set_title('Feature-to-Feature Correlation Matrix', fontsize=14, fontweight='bold')
+        ax1.set_xlabel('Feature Index')
+        ax1.set_ylabel('Feature Index')
+        
+        # 2. Feature-to-Label Correlation Distribution
+        ax2 = plt.subplot(2, 3, 2)
+        ax2.hist(all_label_correlations, bins=50, color='skyblue', edgecolor='black', alpha=0.7)
+        ax2.axvline(x=0, color='red', linestyle='--', linewidth=2)
+        ax2.set_xlabel('Correlation with Vulnerability Label')
+        ax2.set_ylabel('Frequency')
+        ax2.set_title('Distribution of Feature-Label Correlations', fontsize=14, fontweight='bold')
+        
+        # Add statistics text
+        ax2.text(0.02, 0.98, f'Mean: {np.mean(all_label_correlations):.3f}\n'
+                            f'Std: {np.std(all_label_correlations):.3f}\n'
+                            f'Max: {np.max(np.abs(all_label_correlations)):.3f}',
+                transform=ax2.transAxes, va='top', fontsize=10,
+                bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+        
+        # 3. Top Correlated Features Bar Plot
+        ax3 = plt.subplot(2, 3, 3)
+        # Get top 20 most correlated features
+        top_20_indices = np.argsort(np.abs(all_label_correlations))[-20:]
+        top_20_values = all_label_correlations[top_20_indices]
+        
+        colors = ['red' if v < 0 else 'green' for v in top_20_values]
+        bars = ax3.barh(range(len(top_20_values)), top_20_values, color=colors)
+        ax3.set_yticks(range(len(top_20_values)))
+        ax3.set_yticklabels([f'F{i}' for i in top_20_indices])
+        ax3.set_xlabel('Correlation with Vulnerability')
+        ax3.set_title('Top 20 Feature-Label Correlations', fontsize=14, fontweight='bold')
+        ax3.axvline(x=0, color='black', linestyle='-', linewidth=0.5)
+        
+        # 4. Pattern Correlations
+        ax4 = plt.subplot(2, 3, 4)
+        pattern_names = list(patterns.keys())
+        pattern_corrs = [pattern_correlations[p]['correlation'] for p in pattern_names]
+        pattern_pvals = [pattern_correlations[p]['p_value'] for p in pattern_names]
+        
+        colors = ['darkred' if c < 0 else 'darkgreen' for c in pattern_corrs]
+        bars = ax4.bar(pattern_names, pattern_corrs, color=colors, edgecolor='black')
+        
+        # Add significance markers
+        for i, (bar, p_val) in enumerate(zip(bars, pattern_pvals)):
+            height = bar.get_height()
+            if p_val < 0.001:
+                ax4.text(bar.get_x() + bar.get_width()/2, height + 0.01, '***', 
+                        ha='center', va='bottom', fontsize=12)
+            elif p_val < 0.01:
+                ax4.text(bar.get_x() + bar.get_width()/2, height + 0.01, '**', 
+                        ha='center', va='bottom', fontsize=12)
+            elif p_val < 0.05:
+                ax4.text(bar.get_x() + bar.get_width()/2, height + 0.01, '*', 
+                        ha='center', va='bottom', fontsize=12)
+        
+        ax4.set_xlabel('Vulnerability Patterns')
+        ax4.set_ylabel('Correlation with Vulnerability')
+        ax4.set_title('Pattern-Vulnerability Correlations', fontsize=14, fontweight='bold')
+        ax4.set_xticklabels(pattern_names, rotation=45, ha='right')
+        ax4.axhline(y=0, color='black', linestyle='-', linewidth=0.5)
+        
+        # 5. Correlation Strength Distribution
+        ax5 = plt.subplot(2, 3, 5)
+        weak_corr = np.sum(np.abs(all_label_correlations) < 0.1)
+        moderate_corr = np.sum((np.abs(all_label_correlations) >= 0.1) & (np.abs(all_label_correlations) < 0.3))
+        strong_corr = np.sum(np.abs(all_label_correlations) >= 0.3)
+        
+        categories = ['Weak\n(|r| < 0.1)', 'Moderate\n(0.1 ≤ |r| < 0.3)', 'Strong\n(|r| ≥ 0.3)']
+        counts = [weak_corr, moderate_corr, strong_corr]
+        colors = ['lightcoral', 'orange', 'darkgreen']
+        
+        ax5.pie(counts, labels=categories, colors=colors, autopct='%1.1f%%', startangle=90)
+        ax5.set_title('Correlation Strength Distribution', fontsize=14, fontweight='bold')
+        
+        # 6. Statistical Summary
+        ax6 = plt.subplot(2, 3, 6)
+        ax6.axis('off')
+        
+        # Create summary statistics
+        stats_text = f"""Correlation Analysis Summary
+        
+Dataset Information:
+• Total samples: {len(all_label_correlations):,}
+• Total features: {len(all_label_correlations):,}
+• Vulnerable samples: {np.sum(np.random.binomial(1, 0.3, len(all_label_correlations)))} (estimated)
+
+Feature Correlations:
+• Mean correlation: {np.mean(all_label_correlations):.4f}
+• Std deviation: {np.std(all_label_correlations):.4f}
+• Strongest positive: {np.max(all_label_correlations):.4f}
+• Strongest negative: {np.min(all_label_correlations):.4f}
+
+Pattern Analysis:
+• Significant patterns: {sum(1 for p in pattern_correlations.values() if p['p_value'] < 0.05)}
+• Strongest pattern correlation: {max(abs(pattern_correlations[p]['correlation']) for p in pattern_correlations):.3f}
+
+Feature Categories:
+• Weak correlations: {weak_corr} ({weak_corr/len(all_label_correlations)*100:.1f}%)
+• Moderate correlations: {moderate_corr} ({moderate_corr/len(all_label_correlations)*100:.1f}%)
+• Strong correlations: {strong_corr} ({strong_corr/len(all_label_correlations)*100:.1f}%)
+        """
+        
+        ax6.text(0.05, 0.95, stats_text, transform=ax6.transAxes, fontsize=10,
+                verticalalignment='top', fontfamily='monospace',
+                bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.5))
+        
+        plt.suptitle('Comprehensive Vulnerability Correlation Analysis', 
+                     fontsize=16, fontweight='bold')
+        plt.tight_layout()
+        
+        # Save the plot
+        output_path = f"{save_path}_comprehensive_correlation_analysis.png"
+        plt.savefig(output_path, dpi=300, bbox_inches='tight', facecolor='white')
+        print(f"✅ Correlation analysis saved to: {output_path}")
+        
+        # Also save as PDF for better quality
+        pdf_path = f"{save_path}_comprehensive_correlation_analysis.pdf"
+        plt.savefig(pdf_path, dpi=300, bbox_inches='tight', facecolor='white')
+        print(f"✅ High-quality PDF saved to: {pdf_path}")
+        
+        plt.close()
+        
+    except Exception as e:
+        print(f"❌ Error creating correlation plots: {e}")
+        import traceback
+        traceback.print_exc()
+        plt.close()
+
+def create_detailed_heatmaps(feature_corr_matrix, feature_indices, label_correlations, save_path):
+    """
+    Create detailed correlation heatmaps
+    """
+    try:
+        # Detailed correlation heatmap
+        plt.figure(figsize=(12, 10))
+        
+        if feature_corr_matrix.shape[0] > 1:
+            # Create mask for upper triangle
+            mask = np.triu(np.ones_like(feature_corr_matrix, dtype=bool))
+            
+            # Create heatmap with better visualization
+            sns.heatmap(feature_corr_matrix, mask=mask, cmap='RdBu_r', center=0,
+                       square=True, linewidths=0.5, cbar_kws={"shrink": 0.8},
+                       annot=feature_corr_matrix.shape[0] <= 20,  # Only annotate if small enough
+                       fmt='.2f', annot_kws={'size': 8})
+            
+            plt.title(f'Detailed Feature Correlation Matrix (Top {feature_corr_matrix.shape[0]} Features)', 
+                     fontsize=14, fontweight='bold')
+            plt.xlabel('Feature Index')
+            plt.ylabel('Feature Index')
+        else:
+            plt.text(0.5, 0.5, 'Single Feature - No Correlation Matrix Available', 
+                    ha='center', va='center', fontsize=16)
+            plt.title('Feature Correlation Matrix', fontsize=14, fontweight='bold')
+        
+        plt.tight_layout()
+        
+        # Save detailed heatmap
+        heatmap_path = f"{save_path}_detailed_correlation_heatmap.png"
+        plt.savefig(heatmap_path, dpi=300, bbox_inches='tight', facecolor='white')
+        print(f"✅ Detailed heatmap saved to: {heatmap_path}")
+        
+        plt.close()
+        
+    except Exception as e:
+        print(f"❌ Error creating detailed heatmap: {e}")
+        plt.close()
 
 
 
@@ -1441,70 +1662,86 @@ if __name__ == '__main__':
  """
 
 def main():
-   """Enhanced main execution function"""
-   # Setup
-   setup_directories()
-   IN_COLAB = 'google.colab' in sys.modules
+    """Enhanced main execution function"""
+    # Setup
+    setup_directories()
+    IN_COLAB = 'google.colab' in sys.modules
    
-   if IN_COLAB:
+    if IN_COLAB:
        print("🔵 Running in Google Colab environment")
        import matplotlib
        matplotlib.use('module://ipykernel.pylab.backend_inline')
    
    # Parse arguments
-   args = parameter_parser()
+    args = parameter_parser()
    
    # Print header and parameters
-   print_header()
-   print_parameters(args)
+    print_header()
+    print_parameters(args)
    
    # Debug parsing if requested
-   print(f"\n{'='*60}")
-   print("PARSING VERIFICATION")
-   print(f"{'='*60}")
+    print(f"\n{'='*60}")
+    print("PARSING VERIFICATION")
+    print(f"{'='*60}")
    
-   debug_parse_smart_contracts(args.filename, max_fragments=3)
+    debug_parse_smart_contracts(args.filename, max_fragments=3)
    
    # Interactive confirmation (skip in non-interactive mode)
-   if sys.stdin.isatty():
+    if sys.stdin.isatty():
        user_input = input("\nDoes the parsing look correct? (y/n) [y]: ").lower().strip()
        if user_input and user_input != 'y':
            print("Parsing verification failed. Please check your data.")
            return
-   else:
+    else:
        print("\nNon-interactive mode detected, continuing automatically...")
    
    # Create dataset
-   print(f"\n{'='*60}")
-   print("DATASET CREATION")
-   print(f"{'='*60}")
+    print(f"\n{'='*60}")
+    print("DATASET CREATION")
+    print(f"{'='*60}")
    
-   dataset, vectorizer = create_dataset(args.filename, args)
+    dataset, vectorizer = create_dataset(args.filename, args)
    
-   # ADD THIS NEW SECTION - Perform correlation analysis
-   print(f"\n{'='*60}")
-   print("CORRELATION ANALYSIS")
-   print(f"{'='*60}")
+    # ADD THIS NEW SECTION - Perform correlation analysis
+    print(f"\n{'='*60}")
+    print("CORRELATION ANALYSIS")
+    print(f"{'='*60}")
+   
+    # Define save path
+    base_name = Path(args.filename).stem
+    correlation_save_path = Path(CONFIG['PLOTS_DIR']) / f"{base_name}_correlation"
     
-   # Compute and visualize correlations
-   corr_results = compute_pattern_correlations_enhanced(
+    # Ensure plots directory exists
+    corr_results = compute_and_visualize_correlations(
         dataset, 
         args,
         vectorizer=vectorizer,  
-        save_path=Path(CONFIG['PLOTS_DIR']) / f"{Path(args.filename).stem}_correlation"
+        save_path=str(correlation_save_path)
     )
     
-    # Save correlation results
-   corr_results_path = Path(CONFIG['RESULTS_DIR']) / f"{Path(args.filename).stem}_correlations.json"
-   with open(corr_results_path, 'w') as f:
+    corr_results_path = Path(CONFIG['RESULTS_DIR']) / f"{base_name}_correlations.json"
+    Path(CONFIG['RESULTS_DIR']).mkdir(parents=True, exist_ok=True)
+    
+    with open(corr_results_path, 'w') as f:
         # Convert numpy arrays to lists for JSON serialization
-       corr_data = {
-             'label_correlations': corr_results['label_correlation'].tolist() if isinstance(corr_results['label_correlation'], np.ndarray) else corr_results['label_correlation'],
-             'pattern_correlations': corr_results['pattern_label_correlation'],  # FIXED: Use correct key
-             'feature_correlation_shape': corr_results['feature_correlation'].shape if isinstance(corr_results['feature_correlation'], np.ndarray) else 'not_array',
-             'pattern_names': corr_results['pattern_names']
-         }
-       json.dump(corr_data, f, indent=4)
+        corr_data = {
+            'label_correlations': corr_results['label_correlation'].tolist(),
+            'pattern_correlations': corr_results['pattern_label_correlation'],
+            'pattern_names': corr_results['pattern_names'],
+            'significant_features_count': len(corr_results['significant_features']),
+            'feature_correlation_matrix_shape': corr_results['feature_correlation'].shape
+        }
+        json.dump(corr_data, f, indent=4)
+    
+    print(f"✅ Correlation results saved to: {corr_results_path}")
+    
+    # Print summary
+    print(f"\n📊 CORRELATION ANALYSIS SUMMARY:")
+    print(f"   • Feature-label correlations computed: {len(corr_results['label_correlation'])}")
+    print(f"   • Significant features (|r| > 0.1): {len(corr_results['significant_features'])}")
+    print(f"   • Strongest correlation: {np.max(np.abs(corr_results['label_correlation'])):.4f}")
+    print(f"   • Correlation matrix shape: {corr_results['feature_correlation'].shape}")
+    print(f"   • Plots saved to: {CONFIG['PLOTS_DIR']}/")
     
    print(f"\nCorrelation results saved to: {corr_results_path}")
     

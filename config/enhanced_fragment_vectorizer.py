@@ -6,7 +6,6 @@ from gensim.models import Word2Vec
 from collections import Counter, defaultdict
 import hashlib
 from sklearn.preprocessing import StandardScaler
-from scipy.stats import pearsonr
 
 # Set print options to display the entire array
 np.set_printoptions(threshold=np.inf)
