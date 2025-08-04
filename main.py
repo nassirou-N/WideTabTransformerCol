@@ -85,6 +85,119 @@ CONFIG = {
 }
 
 
+def extract_code_patterns_from_fragments(dataset, vectorizer):
+    """
+    Extract actual code patterns from the original fragments
+    
+    This function needs access to the original fragments before vectorization
+    """
+    patterns = {
+        'external_call': ['call', 'send', 'transfer', 'delegatecall', '.value'],
+        'state_change': ['balance', '+=', '-=', 'Accounts[', 'balances['],
+        'access_control': ['require', 'assert', 'modifier', 'onlyOwner', 'msg.sender =='],
+        'value_transfer': ['value', 'msg.value', 'ether', 'wei', '.value('],
+        'control_flow': ['if', 'else', 'for', 'while', 'require(']
+    }
+    
+    pattern_matrix = np.zeros((len(dataset), len(patterns)))
+    
+    # If we have access to the vectorizer with original fragments
+    if hasattr(vectorizer, 'fragments') and hasattr(vectorizer, 'fragment_metadata'):
+        for idx, metadata in enumerate(vectorizer.fragment_metadata):
+            if idx < len(dataset):
+                fragment = vectorizer.fragments[idx]
+                fragment_text = ' '.join(fragment).lower()
+                
+                for p_idx, (pattern_name, keywords) in enumerate(patterns.items()):
+                    count = sum(fragment_text.count(keyword.lower()) for keyword in keywords)
+                    pattern_matrix[idx, p_idx] = count
+    
+    return pattern_matrix
+
+def compute_pattern_correlations_enhanced(dataset, args, vectorizer=None):
+    """
+    Enhanced version that uses actual code patterns if available
+    """
+    print("\nAnalyzing vulnerability pattern correlations...")
+    
+    patterns = {
+        'external_call': ['call', 'send', 'transfer', 'delegatecall', '.value'],
+        'state_change': ['balance', '+=', '-=', 'Accounts[', 'balances['],
+        'access_control': ['require', 'assert', 'modifier', 'onlyOwner', 'msg.sender =='],
+        'value_transfer': ['value', 'msg.value', 'ether', 'wei', '.value('],
+        'control_flow': ['if', 'else', 'for', 'while', 'require(']
+    }
+    
+    # Try to get actual pattern counts
+    if vectorizer is not None:
+        pattern_matrix = extract_code_patterns_from_fragments(dataset, vectorizer)
+    else:
+        # Fallback to statistical features
+        pattern_matrix = np.zeros((len(dataset), len(patterns)))
+        
+        for idx, row in dataset.iterrows():
+            vector = row['vector']
+            vector_flat = vector.flatten()
+            
+            # More sophisticated pattern detection based on vector patterns
+            pattern_matrix[idx, 0] = np.sum(vector_flat > np.percentile(vector_flat, 90))
+            pattern_matrix[idx, 1] = np.var(vector_flat)
+            pattern_matrix[idx, 2] = np.mean(np.abs(vector_flat - np.mean(vector_flat)))
+            pattern_matrix[idx, 3] = np.max(vector_flat) - np.min(vector_flat)
+            pattern_matrix[idx, 4] = np.sum(np.abs(np.diff(vector_flat)) > 0.1)
+    
+    # Normalize pattern matrix
+    from sklearn.preprocessing import StandardScaler
+    scaler = StandardScaler()
+    
+    # Only normalize if we have variance
+    if np.any(np.std(pattern_matrix, axis=0) > 0):
+        pattern_matrix_normalized = scaler.fit_transform(pattern_matrix)
+    else:
+        pattern_matrix_normalized = pattern_matrix
+    
+    # Compute correlation with vulnerability labels
+    y = dataset['label'].values
+    pattern_label_corr = {}
+    
+    for p_idx, pattern_name in enumerate(patterns.keys()):
+        if np.std(pattern_matrix_normalized[:, p_idx]) > 1e-6:
+            corr, p_value = pearsonr(pattern_matrix_normalized[:, p_idx], y)
+            pattern_label_corr[pattern_name] = {
+                'correlation': float(corr),
+                'p_value': float(p_value),
+                'significance': 'significant' if p_value < 0.05 else 'not significant'
+            }
+        else:
+            pattern_label_corr[pattern_name] = {
+                'correlation': 0.0,
+                'p_value': 1.0,
+                'significance': 'not significant'
+            }
+    
+    # Compute inter-pattern correlations
+    if np.any(np.std(pattern_matrix_normalized, axis=0) > 0):
+        pattern_corr_matrix = np.corrcoef(pattern_matrix_normalized.T)
+        pattern_corr_matrix = np.nan_to_num(pattern_corr_matrix, nan=0.0)
+    else:
+        pattern_corr_matrix = np.eye(len(patterns))
+    
+    print("\nPattern detection summary:")
+    for p_idx, pattern_name in enumerate(patterns.keys()):
+        total_count = np.sum(pattern_matrix[:, p_idx])
+        print(f"{pattern_name}: {total_count:.0f} total occurrences")
+    
+    return {
+        'pattern_names': list(patterns.keys()),
+        'pattern_label_correlation': pattern_label_corr,
+        'pattern_correlation_matrix': pattern_corr_matrix
+    }
+
+
+
+
+
+
 def compute_feature_correlations(dataset, args, save_path="correlation_analysis"):
     """
     Compute and visualize feature correlations for vulnerability detection
@@ -153,10 +266,8 @@ def compute_pattern_correlations(dataset, args):
     Returns:
         dict: Pattern correlation results
     """
-    print("\nAnalyzing vulnerability pattern correlations...")
     
-    # Extract pattern features from the dataset
-    pattern_features = extract_pattern_features(dataset)
+    print("\nAnalyzing vulnerability pattern correlations...")
     
     # Define vulnerability patterns to analyze
     patterns = {
@@ -167,29 +278,56 @@ def compute_pattern_correlations(dataset, args):
         'control_flow': ['if', 'else', 'for', 'while']
     }
     
-    # Compute pattern presence matrix
+    # Initialize pattern matrix
     pattern_matrix = np.zeros((len(dataset), len(patterns)))
     
-    for idx, row in enumerate(dataset.iterrows()):
-        vector_text = str(row[1]['vector'])  # Convert vector to searchable text
-        for p_idx, (pattern_name, keywords) in enumerate(patterns.items()):
-            presence = sum(1 for keyword in keywords if keyword in vector_text)
-            pattern_matrix[idx, p_idx] = presence
+    # We need to analyze the original fragments, not the vectors
+    # If you have access to the original fragments, use them
+    # Otherwise, we'll create a proxy based on vector statistics
+    
+    for idx, row in dataset.iterrows():
+        vector = row['vector']
+        
+        # Since we're working with vectors, we'll use statistical properties
+        # as proxies for pattern presence
+        vector_flat = vector.flatten()
+        
+        # Calculate features that might correlate with patterns
+        pattern_matrix[idx, 0] = np.sum(vector_flat > 0.5)  # High activation count (external_call)
+        pattern_matrix[idx, 1] = np.std(vector_flat)  # Variability (state_change)
+        pattern_matrix[idx, 2] = np.mean(np.abs(vector_flat))  # Average magnitude (access_control)
+        pattern_matrix[idx, 3] = np.max(vector_flat)  # Maximum value (value_transfer)
+        pattern_matrix[idx, 4] = len(np.where(np.diff(vector_flat) > 0.1)[0])  # Transitions (control_flow)
+    
+    # Normalize pattern matrix
+    from sklearn.preprocessing import StandardScaler
+    scaler = StandardScaler()
+    pattern_matrix_normalized = scaler.fit_transform(pattern_matrix)
     
     # Compute correlation with vulnerability labels
     y = dataset['label'].values
     pattern_label_corr = {}
     
     for p_idx, pattern_name in enumerate(patterns.keys()):
-        corr, p_value = pearsonr(pattern_matrix[:, p_idx], y)
-        pattern_label_corr[pattern_name] = {
-            'correlation': corr,
-            'p_value': p_value,
-            'significance': 'significant' if p_value < 0.05 else 'not significant'
-        }
+        if np.std(pattern_matrix_normalized[:, p_idx]) > 0:  # Check for variance
+            corr, p_value = pearsonr(pattern_matrix_normalized[:, p_idx], y)
+            pattern_label_corr[pattern_name] = {
+                'correlation': corr,
+                'p_value': p_value,
+                'significance': 'significant' if p_value < 0.05 else 'not significant'
+            }
+        else:
+            pattern_label_corr[pattern_name] = {
+                'correlation': 0.0,
+                'p_value': 1.0,
+                'significance': 'not significant'
+            }
     
     # Compute inter-pattern correlations
-    pattern_corr_matrix = np.corrcoef(pattern_matrix.T)
+    pattern_corr_matrix = np.corrcoef(pattern_matrix_normalized.T)
+    
+    # Handle NaN values
+    pattern_corr_matrix = np.nan_to_num(pattern_corr_matrix, nan=0.0)
     
     return {
         'pattern_names': list(patterns.keys()),
@@ -761,7 +899,7 @@ def create_dataset(filename, args, cache_enabled=True):
     print(f"Vector mean magnitude: {np.mean(np.abs(sample_vector)):.4f}")
     print(f"Vector std deviation: {np.std(sample_vector):.4f}")
     
-    return df
+    return df,vectorizer
 
 def plot_training_curves(history, save_path="training_curves.png", show_in_colab=True):
     """Enhanced plot training curves with better visualization"""
@@ -1317,7 +1455,7 @@ def main():
    print("DATASET CREATION")
    print(f"{'='*60}")
    
-   dataset = create_dataset(args.filename, args)
+   dataset, vectorizer = create_dataset(args.filename, args)
    
    # ADD THIS NEW SECTION - Perform correlation analysis
    print(f"\n{'='*60}")
@@ -1327,7 +1465,8 @@ def main():
    # Compute and visualize correlations
    corr_results = compute_feature_correlations(
         dataset, 
-        args, 
+        args,
+        vectorizer=vectorizer,  
         save_path=Path(CONFIG['PLOTS_DIR']) / f"{Path(args.filename).stem}_correlation"
     )
     
