@@ -543,69 +543,69 @@ class WideTabTransformer:
     
     # In wide_tabtransformer.py - Add inside WideTabTransformer class
 
-   def analyze_learned_correlations(self):
-    """
-    Analyze correlations in the learned representations
-    """
-    from tensorflow.keras import Model
-    import matplotlib.pyplot as plt
-    from scipy.stats import pearsonr
-    
-    # Get intermediate representations
-    # Wide model only needs wide input
-    wide_model = Model(inputs=self.model.input[0], 
-                       outputs=self.model.get_layer('wide_dense').output)
-    
-    # Transformer model only needs transformer input
-    transformer_model = Model(inputs=self.model.input[1], 
-                             outputs=self.model.get_layer('transformer_dense').output)
-    
-    # Get representations for validation data
-    # Pass only the wide input to wide model
-    wide_repr = wide_model.predict(self.x_val_wide)
-    
-    # Pass only the transformer input to transformer model
-    transformer_repr = transformer_model.predict(self.x_val_transformer)
-    
-    # Compute correlations between representations and labels
-    y_val_binary = np.argmax(self.y_val, axis=1)
-    
-    wide_correlations = []
-    transformer_correlations = []
-    
-    for i in range(wide_repr.shape[1]):
-        corr, _ = pearsonr(wide_repr[:, i], y_val_binary)
-        wide_correlations.append(corr)
-    
-    for i in range(transformer_repr.shape[1]):
-        corr, _ = pearsonr(transformer_repr[:, i], y_val_binary)
-        transformer_correlations.append(corr)
-    
-    # Visualize
-    plt.figure(figsize=(12, 5))
-    
-    plt.subplot(1, 2, 1)
-    plt.hist(wide_correlations, bins=30, alpha=0.7, color='blue', edgecolor='black')
-    plt.xlabel('Correlation with Label')
-    plt.ylabel('Frequency')
-    plt.title('Wide Component - Learned Feature Correlations')
-    
-    plt.subplot(1, 2, 2)
-    plt.hist(transformer_correlations, bins=30, alpha=0.7, color='green', edgecolor='black')
-    plt.xlabel('Correlation with Label')
-    plt.ylabel('Frequency')
-    plt.title('Transformer Component - Learned Feature Correlations')
-    
-    plt.tight_layout()
-    
-    # Create models directory if it doesn't exist
-    import os
-    os.makedirs('models', exist_ok=True)
-    
-    plt.savefig('models/learned_correlations.png', dpi=300, bbox_inches='tight')
-    plt.close()
-    
-    return {
-        'wide_correlations': wide_correlations,
-        'transformer_correlations': transformer_correlations
-    }
+    def analyze_learned_correlations(self):
+        """
+        Analyze correlations in the learned representations
+        """
+        from tensorflow.keras import Model
+        import matplotlib.pyplot as plt
+        from scipy.stats import pearsonr
+        
+        # Get intermediate representations
+        # Wide model only needs wide input
+        wide_model = Model(inputs=self.model.input[0], 
+                        outputs=self.model.get_layer('wide_dense').output)
+        
+        # Transformer model only needs transformer input
+        transformer_model = Model(inputs=self.model.input[1], 
+                                outputs=self.model.get_layer('transformer_dense').output)
+        
+        # Get representations for validation data
+        # Pass only the wide input to wide model
+        wide_repr = wide_model.predict(self.x_val_wide)
+        
+        # Pass only the transformer input to transformer model
+        transformer_repr = transformer_model.predict(self.x_val_transformer)
+        
+        # Compute correlations between representations and labels
+        y_val_binary = np.argmax(self.y_val, axis=1)
+        
+        wide_correlations = []
+        transformer_correlations = []
+        
+        for i in range(wide_repr.shape[1]):
+            corr, _ = pearsonr(wide_repr[:, i], y_val_binary)
+            wide_correlations.append(corr)
+        
+        for i in range(transformer_repr.shape[1]):
+            corr, _ = pearsonr(transformer_repr[:, i], y_val_binary)
+            transformer_correlations.append(corr)
+        
+        # Visualize
+        plt.figure(figsize=(12, 5))
+        
+        plt.subplot(1, 2, 1)
+        plt.hist(wide_correlations, bins=30, alpha=0.7, color='blue', edgecolor='black')
+        plt.xlabel('Correlation with Label')
+        plt.ylabel('Frequency')
+        plt.title('Wide Component - Learned Feature Correlations')
+        
+        plt.subplot(1, 2, 2)
+        plt.hist(transformer_correlations, bins=30, alpha=0.7, color='green', edgecolor='black')
+        plt.xlabel('Correlation with Label')
+        plt.ylabel('Frequency')
+        plt.title('Transformer Component - Learned Feature Correlations')
+        
+        plt.tight_layout()
+        
+        # Create models directory if it doesn't exist
+        import os
+        os.makedirs('models', exist_ok=True)
+        
+        plt.savefig('models/learned_correlations.png', dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        return {
+            'wide_correlations': wide_correlations,
+            'transformer_correlations': transformer_correlations
+        }
