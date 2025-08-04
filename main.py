@@ -1743,10 +1743,10 @@ def main():
     print(f"   • Correlation matrix shape: {corr_results['feature_correlation'].shape}")
     print(f"   • Plots saved to: {CONFIG['PLOTS_DIR']}/")
     
-   print(f"\nCorrelation results saved to: {corr_results_path}")
+    print(f"\nCorrelation results saved to: {corr_results_path}")
     
     # Optional: Add feature selection based on correlation
-   if hasattr(args, 'use_correlation_selection') and args.use_correlation_selection:
+    if hasattr(args, 'use_correlation_selection') and args.use_correlation_selection:
         dataset, selected_features = select_features_by_correlation(
             dataset, 
             threshold=0.1, 
@@ -1756,26 +1756,26 @@ def main():
     
 
 
-   # Save dataset info
-   dataset_info = {
+    # Save dataset info
+    dataset_info = {
        'total_samples': len(dataset),
        'vulnerable_samples': sum(dataset['label'] == 1),
        'safe_samples': sum(dataset['label'] == 0),
        'vector_shape': dataset.iloc[0]['vector'].shape,
        'vulnerability_ratio': sum(dataset['label'] == 1) / len(dataset)
-   }
+    }
    
-   with open(Path(CONFIG['RESULTS_DIR']) / 'dataset_info.json', 'w') as f:
+    with open(Path(CONFIG['RESULTS_DIR']) / 'dataset_info.json', 'w') as f:
        json.dump(dataset_info, f, indent=4)
    
    # Training phase
-   print(f"\n{'='*60}")
-   print("MODEL TRAINING")
-   print(f"{'='*60}")
+    print(f"\n{'='*60}")
+    print("MODEL TRAINING")
+    print(f"{'='*60}")
    
-   start_time = time.time()
+    start_time = time.time()
    
-   if args.use_kfold:
+    if args.use_kfold:
        # K-fold cross validation
        aggregated_results, histories = train_with_kfold(
            dataset, args, k=args.kfold_splits
@@ -1800,7 +1800,7 @@ def main():
            if isinstance(stats, dict) and 'mean' in stats
        }
        
-   else:
+    else:
        # Standard training
        model = WideTabTransformer(dataset, args)
        
@@ -1839,43 +1839,43 @@ def main():
            model.model.save(model_path)
            print(f"Model saved to: {model_path}")
    
-   training_time = time.time() - start_time
+    training_time = time.time() - start_time
    
-   # Plot evaluation metrics
-   print(f"\n{'='*60}")
-   print("GENERATING EVALUATION PLOTS")
-   print(f"{'='*60}")
+    # Plot evaluation metrics
+    print(f"\n{'='*60}")
+    print("GENERATING EVALUATION PLOTS")
+    print(f"{'='*60}")
    
-   plot_metrics_comparison(
+    plot_metrics_comparison(
        results,
        save_path=Path(CONFIG['PLOTS_DIR']) / f"{Path(args.filename).stem}_metrics_comparison.png",
        show_in_colab=IN_COLAB
-   )
+    )
    
-   plot_confusion_matrix_detailed(
+    plot_confusion_matrix_detailed(
        results,
        save_path=Path(CONFIG['PLOTS_DIR']) / f"{Path(args.filename).stem}_confusion_matrix.png",
        show_in_colab=IN_COLAB
-   )
+    )
    
-   # Save final results
-   save_results(results, args, 
+    # Save final results
+    save_results(results, args, 
                Path(CONFIG['RESULTS_DIR']) / f"{Path(args.filename).stem}_final_results.json")
    
-   # Generate final report
-   generate_final_report(args, results, training_time, dataset_info)
+    # Generate final report
+    generate_final_report(args, results, training_time, dataset_info)
    
-   # Final summary
-   print(f"\n{'='*60}")
-   print("EXECUTION COMPLETED SUCCESSFULLY! 🎉")
-   print(f"{'='*60}")
-   print(f"Total execution time: {training_time/60:.2f} minutes")
-   print(f"Results saved in: {CONFIG['RESULTS_DIR']}/")
-   print(f"Plots saved in: {CONFIG['PLOTS_DIR']}/")
-   print(f"Models saved in: {CONFIG['MODELS_DIR']}/")
-   
-   if IN_COLAB:
-       print("\n📊 All plots have been displayed inline in Colab")
+    # Final summary
+    print(f"\n{'='*60}")
+    print("EXECUTION COMPLETED SUCCESSFULLY! 🎉")
+    print(f"{'='*60}")
+    print(f"Total execution time: {training_time/60:.2f} minutes")
+    print(f"Results saved in: {CONFIG['RESULTS_DIR']}/")
+    print(f"Plots saved in: {CONFIG['PLOTS_DIR']}/")
+    print(f"Models saved in: {CONFIG['MODELS_DIR']}/")
+    
+    if IN_COLAB:
+        print("\n📊 All plots have been displayed inline in Colab")
 
 def average_histories(histories):
    """Average multiple training histories for k-fold visualization"""
