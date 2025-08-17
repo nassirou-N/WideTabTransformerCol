@@ -4,7 +4,8 @@ Smart Contract Vulnerability Detection using Wide + TabTransformer Neural Networ
 
 Enhanced version with improved training stability and performance optimizations
 """
-
+from sklearn.metrics import roc_curve, auc, precision_recall_curve, roc_auc_score
+from sklearn.utils import resample
 import os
 import sys
 import time
@@ -83,6 +84,261 @@ CONFIG = {
     'PLOTS_DIR': 'plots',
     'MODELS_DIR': 'models'
 }
+
+
+def plot_roc_curve_analysis(model, dataset, args, save_path="roc_analysis.png", show_in_colab=True):
+    """
+    Create comprehensive ROC curve analysis with multiple visualizations
+    """
+    from sklearn.metrics import roc_curve, auc, precision_recall_curve
+    from sklearn.model_selection import train_test_split
+    
+    print(f"\n{'='*60}")
+    print("ROC CURVE ANALYSIS")
+    print(f"{'='*60}")
+    
+    # Prepare data
+    X = np.stack(dataset['vector'].values)
+    y = dataset['label'].values
+    
+    # Split for ROC analysis (if not already split)
+    if hasattr(model, 'x_test_wide'):
+        X_test_wide = model.x_test_wide
+        X_test_transformer = model.x_test_transformer
+        y_test = np.argmax(model.y_test, axis=1)
+    else:
+        _, X_test, _, y_test = train_test_split(X, y, test_size=0.2, stratify=y, random_state=42)
+        wide_features = args.wide_features
+        X_test_wide = X_test[:, :wide_features]
+        X_test_transformer = X_test[:, wide_features:]
+    
+    # Get prediction probabilities
+    print("Computing prediction probabilities...")
+    y_pred_proba = model.model.predict([X_test_wide, X_test_transformer], verbose=0)
+    y_scores = y_pred_proba[:, 1] if y_pred_proba.shape[1] == 2 else y_pred_proba.flatten()
+    
+    # Compute ROC curve
+    fpr, tpr, thresholds = roc_curve(y_test, y_scores)
+    roc_auc = auc(fpr, tpr)
+    
+    # Compute Precision-Recall curve
+    precision, recall, pr_thresholds = precision_recall_curve(y_test, y_scores)
+    pr_auc = auc(recall, precision)
+    
+    # Find optimal threshold using Youden's J statistic
+    j_scores = tpr - fpr
+    optimal_idx = np.argmax(j_scores)
+    optimal_threshold = thresholds[optimal_idx]
+    optimal_fpr = fpr[optimal_idx]
+    optimal_tpr = tpr[optimal_idx]
+    
+    print(f"ROC AUC: {roc_auc:.4f}")
+    print(f"PR AUC: {pr_auc:.4f}")
+    print(f"Optimal threshold: {optimal_threshold:.4f}")
+    
+    # Create comprehensive visualization
+    plt.style.use('default')
+    fig = plt.figure(figsize=(20, 12))
+    
+    # 1. ROC Curve
+    ax1 = plt.subplot(2, 3, 1)
+    ax1.plot(fpr, tpr, color='darkorange', lw=3, 
+             label=f'ROC Curve (AUC = {roc_auc:.4f})')
+    ax1.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--', 
+             label='Random Classifier')
+    ax1.plot(optimal_fpr, optimal_tpr, marker='o', markersize=10, 
+             color='red', label=f'Optimal Point (θ={optimal_threshold:.3f})')
+    
+    ax1.set_xlim([0.0, 1.0])
+    ax1.set_ylim([0.0, 1.05])
+    ax1.set_xlabel('False Positive Rate', fontsize=12)
+    ax1.set_ylabel('True Positive Rate', fontsize=12)
+    ax1.set_title('ROC Curve Analysis', fontsize=14, fontweight='bold')
+    ax1.legend(loc="lower right")
+    ax1.grid(True, alpha=0.3)
+    
+    # 2. Precision-Recall Curve
+    ax2 = plt.subplot(2, 3, 2)
+    ax2.plot(recall, precision, color='blue', lw=3,
+             label=f'PR Curve (AUC = {pr_auc:.4f})')
+    baseline = np.sum(y_test) / len(y_test)
+    ax2.axhline(y=baseline, color='red', linestyle='--', lw=2,
+                label=f'Baseline ({baseline:.3f})')
+    
+    ax2.set_xlim([0.0, 1.0])
+    ax2.set_ylim([0.0, 1.05])
+    ax2.set_xlabel('Recall', fontsize=12)
+    ax2.set_ylabel('Precision', fontsize=12)
+    ax2.set_title('Precision-Recall Curve', fontsize=14, fontweight='bold')
+    ax2.legend(loc="lower left")
+    ax2.grid(True, alpha=0.3)
+    
+    # 3. Threshold Analysis
+    ax3 = plt.subplot(2, 3, 3)
+    ax3.plot(thresholds, tpr, label='True Positive Rate', color='green', lw=2)
+    ax3.plot(thresholds, fpr, label='False Positive Rate', color='red', lw=2)
+    ax3.plot(thresholds, tpr - fpr, label="Youden's J", color='purple', lw=2)
+    ax3.axvline(x=optimal_threshold, color='black', linestyle='--', lw=2,
+                label=f'Optimal θ = {optimal_threshold:.3f}')
+    
+    ax3.set_xlabel('Threshold', fontsize=12)
+    ax3.set_ylabel('Rate', fontsize=12)
+    ax3.set_title('Threshold Analysis', fontsize=14, fontweight='bold')
+    ax3.legend()
+    ax3.grid(True, alpha=0.3)
+    
+    # 4. Score Distribution
+    ax4 = plt.subplot(2, 3, 4)
+    scores_vuln = y_scores[y_test == 1]
+    scores_safe = y_scores[y_test == 0]
+    
+    ax4.hist(scores_safe, bins=30, alpha=0.7, label='Safe Contracts', 
+             color='blue', density=True)
+    ax4.hist(scores_vuln, bins=30, alpha=0.7, label='Vulnerable Contracts', 
+             color='red', density=True)
+    ax4.axvline(x=optimal_threshold, color='black', linestyle='--', lw=2,
+                label=f'Optimal Threshold')
+    
+    ax4.set_xlabel('Prediction Score', fontsize=12)
+    ax4.set_ylabel('Density', fontsize=12)
+    ax4.set_title('Score Distribution by True Class', fontsize=14, fontweight='bold')
+    ax4.legend()
+    ax4.grid(True, alpha=0.3)
+    
+    # 5. Classification Metrics vs Threshold
+    ax5 = plt.subplot(2, 3, 5)
+    threshold_range = np.linspace(0.1, 0.9, 50)
+    metrics_vs_threshold = []
+    
+    for thresh in threshold_range:
+        y_pred_thresh = (y_scores >= thresh).astype(int)
+        tp = np.sum((y_pred_thresh == 1) & (y_test == 1))
+        fp = np.sum((y_pred_thresh == 1) & (y_test == 0))
+        tn = np.sum((y_pred_thresh == 0) & (y_test == 0))
+        fn = np.sum((y_pred_thresh == 0) & (y_test == 1))
+        
+        precision_thresh = tp / (tp + fp) if (tp + fp) > 0 else 0
+        recall_thresh = tp / (tp + fn) if (tp + fn) > 0 else 0
+        f1_thresh = 2 * precision_thresh * recall_thresh / (precision_thresh + recall_thresh) if (precision_thresh + recall_thresh) > 0 else 0
+        accuracy_thresh = (tp + tn) / (tp + tn + fp + fn)
+        
+        metrics_vs_threshold.append([precision_thresh, recall_thresh, f1_thresh, accuracy_thresh])
+    
+    metrics_vs_threshold = np.array(metrics_vs_threshold)
+    
+    ax5.plot(threshold_range, metrics_vs_threshold[:, 0], label='Precision', lw=2)
+    ax5.plot(threshold_range, metrics_vs_threshold[:, 1], label='Recall', lw=2)
+    ax5.plot(threshold_range, metrics_vs_threshold[:, 2], label='F1-Score', lw=2)
+    ax5.plot(threshold_range, metrics_vs_threshold[:, 3], label='Accuracy', lw=2)
+    ax5.axvline(x=optimal_threshold, color='black', linestyle='--', lw=2, label=f'Optimal θ')
+    
+    ax5.set_xlabel('Threshold', fontsize=12)
+    ax5.set_ylabel('Score', fontsize=12)
+    ax5.set_title('Metrics vs Threshold', fontsize=14, fontweight='bold')
+    ax5.legend()
+    ax5.grid(True, alpha=0.3)
+    ax5.set_ylim([0, 1.05])
+    
+    # 6. ROC Analysis Summary
+    ax6 = plt.subplot(2, 3, 6)
+    ax6.axis('off')
+    
+    # Calculate additional metrics at optimal threshold
+    y_pred_optimal = (y_scores >= optimal_threshold).astype(int)
+    tp_opt = np.sum((y_pred_optimal == 1) & (y_test == 1))
+    fp_opt = np.sum((y_pred_optimal == 1) & (y_test == 0))
+    tn_opt = np.sum((y_pred_optimal == 0) & (y_test == 0))
+    fn_opt = np.sum((y_pred_optimal == 0) & (y_test == 1))
+    
+    precision_opt = tp_opt / (tp_opt + fp_opt) if (tp_opt + fp_opt) > 0 else 0
+    recall_opt = tp_opt / (tp_opt + fn_opt) if (tp_opt + fn_opt) > 0 else 0
+    f1_opt = 2 * precision_opt * recall_opt / (precision_opt + recall_opt) if (precision_opt + recall_opt) > 0 else 0
+    accuracy_opt = (tp_opt + tn_opt) / (tp_opt + tn_opt + fp_opt + fn_opt)
+    
+    summary_text = f"""ROC Analysis Summary
+
+ROC AUC: {roc_auc:.4f}
+PR AUC: {pr_auc:.4f}
+Optimal Threshold: {optimal_threshold:.4f}
+
+At Optimal Threshold:
+• Accuracy: {accuracy_opt:.4f}
+• Precision: {precision_opt:.4f}
+• Recall: {recall_opt:.4f}
+• F1-Score: {f1_opt:.4f}
+
+Confusion Matrix:
+          Predicted
+Actual    Safe  Vuln
+Safe     {tn_opt:4d}  {fp_opt:4d}
+Vuln     {fn_opt:4d}  {tp_opt:4d}
+    """
+    
+    ax6.text(0.05, 0.95, summary_text, transform=ax6.transAxes, fontsize=10,
+             verticalalignment='top', fontfamily='monospace',
+             bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.5))
+    
+    plt.suptitle('Comprehensive ROC Curve Analysis', fontsize=16, fontweight='bold')
+    plt.tight_layout()
+    
+    plt.savefig(save_path, dpi=300, bbox_inches='tight', facecolor='white')
+    print(f"✅ ROC analysis saved to: {save_path}")
+    
+    if show_in_colab and 'google.colab' in sys.modules:
+        plt.show()
+    
+    plt.close()
+    
+    return {
+        'roc_auc': float(roc_auc),
+        'pr_auc': float(pr_auc),
+        'optimal_threshold': float(optimal_threshold),
+        'optimal_tpr': float(optimal_tpr),
+        'optimal_fpr': float(optimal_fpr)
+    }
+
+
+def calculate_roc_confidence_intervals(y_true, y_scores, n_bootstraps=1000, confidence_level=0.95):
+    """Calculate confidence intervals for ROC AUC using bootstrap sampling"""
+    from sklearn.metrics import roc_auc_score
+    from sklearn.utils import resample
+    
+    print(f"Calculating {confidence_level*100}% confidence intervals...")
+    
+    auc_scores = []
+    np.random.seed(42)
+    
+    for i in range(n_bootstraps):
+        indices = resample(range(len(y_true)), random_state=i)
+        y_true_boot = y_true[indices]
+        y_scores_boot = y_scores[indices]
+        
+        try:
+            auc_boot = roc_auc_score(y_true_boot, y_scores_boot)
+            auc_scores.append(auc_boot)
+        except:
+            continue
+    
+    auc_scores = np.array(auc_scores)
+    
+    alpha = 1 - confidence_level
+    lower_percentile = (alpha/2) * 100
+    upper_percentile = (1 - alpha/2) * 100
+    
+    stats = {
+        'mean_auc': np.mean(auc_scores),
+        'std_auc': np.std(auc_scores),
+        'ci_lower': np.percentile(auc_scores, lower_percentile),
+        'ci_upper': np.percentile(auc_scores, upper_percentile),
+        'confidence_level': confidence_level
+    }
+    
+    print(f"AUC: {stats['mean_auc']:.4f} ± {stats['std_auc']:.4f}")
+    print(f"{confidence_level*100}% CI: [{stats['ci_lower']:.4f}, {stats['ci_upper']:.4f}]")
+    
+    return stats
+
+
 
 
 def extract_code_patterns_from_fragments(dataset, vectorizer):
@@ -1823,18 +2079,72 @@ def main():
        print(f"{'='*60}")
        
        results = model.evaluate()
-        # ADD THIS - Analyze learned correlations
-       print(f"\n{'='*60}")
-       print("LEARNED REPRESENTATION ANALYSIS")
-       print(f"{'='*60}")
+
+    # 🆕 ROC CURVE ANALYSIS - NEW SECTION
+    print(f"\n{'='*60}")
+    print("ROC CURVE ANALYSIS")
+    print(f"{'='*60}")
+    
+    roc_results = plot_roc_curve_analysis(
+        model, 
+        dataset, 
+        args,
+        save_path=Path(CONFIG['PLOTS_DIR']) / f"{base_name}_roc_analysis.png",
+        show_in_colab=IN_COLAB
+    )
+    
+    # Save ROC results
+    roc_results_path = Path(CONFIG['RESULTS_DIR']) / f"{base_name}_roc_results.json"
+    with open(roc_results_path, 'w') as f:
+        json.dump(roc_results, f, indent=4)
+    
+    print(f"✅ ROC analysis results saved to: {roc_results_path}")
+    
+    # Calculate confidence intervals for ROC AUC
+    print(f"\n{'='*50}")
+    print("ROC AUC CONFIDENCE INTERVALS")
+    print(f"{'='*50}")
+    
+    # Prepare test data for confidence interval calculation
+    X = np.stack(dataset['vector'].values)
+    y = dataset['label'].values
+    
+    if hasattr(model, 'x_test_wide'):
+        X_test_wide = model.x_test_wide
+        X_test_transformer = model.x_test_transformer
+        y_test = np.argmax(model.y_test, axis=1)
+    else:
+        from sklearn.model_selection import train_test_split
+        _, X_test, _, y_test = train_test_split(X, y, test_size=0.2, stratify=y, random_state=42)
         
-       learned_corr = model.analyze_learned_correlations()
-       print(f"Wide component average correlation: {np.mean(np.abs(learned_corr['wide_correlations'])):.3f}")
-       print(f"Transformer component average correlation: {np.mean(np.abs(learned_corr['transformer_correlations'])):.3f}")
+        wide_features = args.wide_features
+        X_test_wide = X_test[:, :wide_features]
+        X_test_transformer = X_test[:, wide_features:]
+    
+    y_pred_proba = model.model.predict([X_test_wide, X_test_transformer], verbose=0)
+    y_scores = y_pred_proba[:, 1] if y_pred_proba.shape[1] == 2 else y_pred_proba.flatten()
+       
+    ci_results = calculate_roc_confidence_intervals(y_test, y_scores, n_bootstraps=1000)
+       
+       # Save confidence interval results
+    ci_results_path = Path(CONFIG['RESULTS_DIR']) / f"{base_name}_roc_confidence_intervals.json"
+    with open(ci_results_path, 'w') as f:
+           json.dump(ci_results, f, indent=4)
+       
+    print(f"✅ ROC confidence intervals saved to: {ci_results_path}")
+
+        # ADD THIS - Analyze learned correlations
+    print(f"\n{'='*60}")
+    print("LEARNED REPRESENTATION ANALYSIS")
+    print(f"{'='*60}")
+        
+    learned_corr = model.analyze_learned_correlations()
+    print(f"Wide component average correlation: {np.mean(np.abs(learned_corr['wide_correlations'])):.3f}")
+    print(f"Transformer component average correlation: {np.mean(np.abs(learned_corr['transformer_correlations'])):.3f}")
     
        
        # Save model if requested
-       if args.save_best_model:
+    if args.save_best_model:
            model_path = Path(CONFIG['MODELS_DIR']) / f"{Path(args.filename).stem}_final_model.h5"
            model.model.save(model_path)
            print(f"Model saved to: {model_path}")
@@ -1898,7 +2208,7 @@ def average_histories(histories):
    
    return avg_history
 
-def generate_final_report(args, results, training_time, dataset_info):
+def generate_final_report(args, results, training_time, dataset_info, roc_results=None):
    """Generate comprehensive markdown report"""
    report_path = Path(CONFIG['RESULTS_DIR']) / f"{Path(args.filename).stem}_report.md"
    
@@ -2009,6 +2319,16 @@ def generate_final_report(args, results, training_time, dataset_info):
        f.write("in smart contracts. The hybrid approach effectively combines ")
        f.write("memorization (Wide) and generalization (TabTransformer) ")
        f.write("to achieve robust vulnerability detection.\n")
+          # ADD this section in generate_final_report function
+       f.write("## ROC Analysis\n\n")
+       if roc_results:
+           f.write("| Metric | Value |\n")
+           f.write("|--------|-------|\n")
+           f.write(f"| ROC AUC | {roc_results['roc_auc']:.4f} |\n")
+           f.write(f"| PR AUC | {roc_results['pr_auc']:.4f} |\n")
+           f.write(f"| Optimal Threshold | {roc_results['optimal_threshold']:.4f} |\n")
+           f.write(f"| Optimal TPR | {roc_results['optimal_tpr']:.4f} |\n")
+           f.write(f"| Optimal FPR | {roc_results['optimal_fpr']:.4f} |\n\n")
    
    print(f"\nDetailed report saved to: {report_path}")
 
